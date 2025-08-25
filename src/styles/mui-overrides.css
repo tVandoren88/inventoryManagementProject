@@ -1,0 +1,9 @@
+/* src/styles/mui-overrides.css */
+.no-overlay-popover {
+  /* z-index: 0 !important; */
+  pointer-events: none !important;
+}
+
+.no-overlay-popover .MuiPaper-root {
+  pointer-events: auto !important;
+}
