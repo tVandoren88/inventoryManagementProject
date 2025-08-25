@@ -80,16 +80,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             listener.subscription.unsubscribe();
         };
     }, []);
-    const checkLicense = async () => {
+    const checkLicense = async (companyId?: string) => {
+        const idToCheck = companyId || company_id;
+        if (!idToCheck) throw new Error("No company ID available");
+
         const { data, error } = await supabase
             .from("licenses")
             .select("status, expiration_date")
-            .eq("company_id", company_id)
+            .eq("company_id", idToCheck)
             .single();
 
-        if (error || !data || data.status !== "Active" || new Date(data.expiration_date) < new Date()) {
+        console.log("License data:", data, "Error:", error);
+
+        if (error || !data) throw new Error("License not found.");
+
+        const expired = new Date(data.expiration_date) < new Date();
+        if (data.status !== "Active" || expired) {
             throw new Error("License is invalid or expired.");
         }
+
+        return data.status
     };
     // Function to check if user has permission
     const hasPermission = (requiredRoles: string[]) => {
