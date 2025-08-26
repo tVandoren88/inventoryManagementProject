@@ -29,7 +29,7 @@ import { useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 
 const Layout: React.FC = () => {
-  const { user, role, hasPermission } = useAuth();
+  const { user, role, hasPermission,logout } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const navigate = useNavigate();
@@ -137,8 +137,8 @@ const handleMenuOpen = (
 
   // Logout handler
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    window.location.reload();
+      await logout();        // clears session + context state
+      navigate("/login");    // ensures UX goes back to login
   };
 
   // Active route helper

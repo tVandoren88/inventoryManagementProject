@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { ROLE_PERMISSIONS } from "../utils/permissions";
+import { hardResetAuth } from "../utils/recovery";
 
 interface AuthContextType {
   user: any | null;
@@ -21,14 +22,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [company_id, setCompanyID] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Prevent double init in React 18 StrictMode (dev)
   const initialized = useRef(false);
 
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
-
-    let cancelled = false;
 
     const hydrateProfile = async (uid: string) => {
       const { data, error } = await supabase
@@ -49,9 +47,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const init = async () => {
       setLoading(true);
-      const { data: sessionData } = await supabase.auth.getSession();
-      const currentUser = sessionData?.session?.user ?? null;
-      if (!cancelled) {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const currentUser = sessionData?.session?.user ?? null;
         setUser(currentUser);
         if (currentUser) {
           await hydrateProfile(currentUser.id);
@@ -59,6 +57,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setRole(null);
           setCompanyID(null);
         }
+      } catch (e: any) {
+        const msg = String(e?.message || "").toLowerCase();
+        // Auto-recover from IndexedDB corruption (“snappy”, “corruption”, etc.)
+        if (msg.includes("snappy") || msg.includes("indexeddb") || msg.includes("corruption")) {
+          console.warn("Detected storage corruption, performing hard auth reset…", e);
+          try { await supabase.auth.signOut(); } catch {}
+          await hardResetAuth();
+          window.location.assign("/login");
+          return; // stop init flow
+        }
+        console.error("Unexpected auth init error:", e);
+        setUser(null);
+        setRole(null);
+        setCompanyID(null);
+      } finally {
         setLoading(false);
       }
     };
@@ -88,7 +101,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => {
-      cancelled = true;
       sub.subscription.unsubscribe();
     };
   }, []);
@@ -116,69 +128,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return requiredRoles.some((r) => ROLE_PERMISSIONS[role]?.includes(r));
   };
 
-  // New: login returns hydrated role & company_id immediately
-const login = async (email: string, password: string) => {
-  setLoading(true);
+  // Normalize email to avoid case-sensitivity issues
+  const login = async (email: string, password: string) => {
+    setLoading(true);
+    const normalizedEmail = email.trim().toLowerCase();
 
-  // Normalize email for case insensitivity
-  const normalizedEmail = email.trim().toLowerCase();
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    });
 
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: normalizedEmail,
-    password,
-  });
-
-  if (error) {
-    setLoading(false);
-    return { error: error.message };
-  }
-
-  const sessionUser = data.user ?? data.session?.user ?? null;
-  let nextRole: string | null = null;
-  let nextCompany: string | null = null;
-
-  if (sessionUser) {
-    const { data: prof, error: profErr } = await supabase
-      .from("profiles")
-      .select("role, company_id")
-      .eq("id", sessionUser.id)
-      .single();
-
-    if (!profErr && prof) {
-      setUser(sessionUser);
-      setRole(prof.role);
-      setCompanyID(prof.company_id);
-      nextRole = prof.role ?? null;
-      nextCompany = prof.company_id ?? null;
-    } else {
-      console.error("login hydrate error:", profErr);
-      setUser(sessionUser);
-      setRole(null);
-      setCompanyID(null);
+    if (error) {
+      setLoading(false);
+      return { error: error.message };
     }
-  }
 
-  setLoading(false);
-  return { error: null, role: nextRole, company_id: nextCompany };
-};
+    const sessionUser = data.user ?? data.session?.user ?? null;
+    let nextRole: string | null = null;
+    let nextCompany: string | null = null;
 
+    if (sessionUser) {
+      const { data: prof, error: profErr } = await supabase
+        .from("profiles")
+        .select("role, company_id")
+        .eq("id", sessionUser.id)
+        .single();
 
-const logout = async () => {
-  setLoading(true);
-  const { error } = await supabase.auth.signOut();
+      if (!profErr && prof) {
+        setUser(sessionUser);
+        setRole(prof.role);
+        setCompanyID(prof.company_id);
+        nextRole = prof.role ?? null;
+        nextCompany = prof.company_id ?? null;
+      } else {
+        console.error("login hydrate error:", profErr);
+        setUser(sessionUser);
+        setRole(null);
+        setCompanyID(null);
+      }
+    }
 
-  if (error) {
-    console.error("signOut error:", error);
-    // Still force-clear local state so UI doesn't appear logged in
-  }
+    setLoading(false);
+    return { error: null, role: nextRole, company_id: nextCompany };
+  };
 
-  // Clear EVERYTHING related to the session
-  setUser(null);
-  setRole(null);
-  setCompanyID(null);
-  setLoading(false);
-};
+  const logout = async () => {
+    setLoading(true);
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error("signOut error:", error);
 
+    // Force-clear local auth state regardless of error
+    setUser(null);
+    setRole(null);
+    setCompanyID(null);
+    setLoading(false);
+  };
 
   return (
     <AuthContext.Provider
