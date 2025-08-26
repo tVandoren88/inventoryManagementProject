@@ -163,14 +163,22 @@ const login = async (email: string, password: string) => {
 };
 
 
-  const logout = async () => {
-    setLoading(true);
-    await supabase.auth.signOut();
-    setUser(null);
-    setRole(null);
-    setCompanyID(null);
-    setLoading(false);
-  };
+const logout = async () => {
+  setLoading(true);
+  const { error } = await supabase.auth.signOut();
+
+  if (error) {
+    console.error("signOut error:", error);
+    // Still force-clear local state so UI doesn't appear logged in
+  }
+
+  // Clear EVERYTHING related to the session
+  setUser(null);
+  setRole(null);
+  setCompanyID(null);
+  setLoading(false);
+};
+
 
   return (
     <AuthContext.Provider
